@@ -11,14 +11,13 @@
 #include <ranges>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 #include <windows.h>
 #include <tlhelp32.h>
 
 #include "Zydis/Zydis.h"
 #include "llvm_56379_workaround.hpp"
-
-#define ZYDIS_DFLAG_VISIBLE_OPERANDS_ONLY (1 << 0)
 
 struct Option {
   std::wstring_view name{};
@@ -141,12 +140,38 @@ concept DecoderCallback = std::invocable<T, Instruction &> && std::convertible_t
 struct Decoder : ZydisDecoder {
   Decoder() { detail::assert_status(ZydisDecoderInit(this, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64)); }
 
+  ZyanStatus ZydisDecoderDecodeFull(ZydisDecoder const *decoder, void const *buffer, ZyanUSize length, ZydisDecodedInstruction *instruction,
+                                    ZydisDecodedOperand *operands) {
+    if (!decoder || !instruction || !operands) {
+      return ZYAN_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (!buffer || !length) {
+      return ZYDIS_STATUS_NO_MORE_DATA;
+    }
+
+    if (decoder->decoder_mode[ZYDIS_DECODER_MODE_MINIMAL]) {
+      return ZYAN_STATUS_MISSING_DEPENDENCY;
+    }
+
+    ZydisDecoderContext context;
+    ZYAN_CHECK(ZydisDecoderDecodeInstruction(decoder, &context, buffer, length, instruction));
+
+    ZyanU8 const count = instruction->operand_count_visible;
+
+    if (!count) {
+      return ZYAN_STATUS_SUCCESS;
+    }
+
+    return ZydisDecoderDecodeOperands(decoder, &context, instruction, operands, count);
+  }
+
   void disassemble(ZyanU64 address, DecoderCallback auto &&callback) {
     Instruction instrn{};
     instrn.address = address;
 
     while (detail::assert_status(
-        ZydisDecoderDecodeFull(this, reinterpret_cast<ZyanU8 const *>(instrn.address), 32, &instrn, instrn.operands))) {
+        Decoder::ZydisDecoderDecodeFull(this, reinterpret_cast<ZyanU8 const *>(instrn.address), 32, &instrn, instrn.operands))) {
       if (callback(instrn) == DecoderStatus::kDone) return;
 
       instrn.address += instrn.length;
@@ -403,11 +428,8 @@ int main() try {
   else
     std::cout << "Your Windows 11 experience is now dehanced!\n";
 
-  system("pause");
-
   return 0;
 } catch (std::exception const &e) {
   std::cerr << e.what() << '\n';
-  system("pause");
   return 1;
 }
