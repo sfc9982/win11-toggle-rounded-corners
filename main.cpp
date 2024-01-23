@@ -42,7 +42,7 @@ inline void verbose(auto &&...args) {
 
 template <std::size_t N>
 struct ProgramOptions {
-  ProgramOptions(auto &&...opts)
+  explicit ProgramOptions(auto &&...opts)
       : argc{0},
         argv{const_cast<decltype(argv)>(CommandLineToArgvW(GetCommandLineW(), &argc))},
         command{argv[0]},
@@ -76,7 +76,7 @@ struct ProgramOptions {
   }
 
   template <typename ValT>
-  constexpr std::optional<std::reference_wrapper<ValT>> get(std::wstring_view name) const {
+  [[nodiscard]] constexpr std::optional<std::reference_wrapper<ValT>> get(std::wstring_view name) const {
     if (auto result = std::ranges::find_if(options, [name](auto const &option) constexpr noexcept { return option.name == name; });
         result != std::end(options))
       return {*result};
@@ -93,8 +93,8 @@ struct ProgramOptions {
     std::wcout << L'\n';
   }
 
-  int argc;
-  wchar_t const **argv;
+  int argc{};
+  wchar_t const **argv{};
   std::wstring_view command;
   std::wstring_view program_name;
   std::array<Option, N> options;
@@ -107,7 +107,7 @@ namespace detail {
 static inline bool assert_status(ZyanStatus status, std::source_location const location = std::source_location::current()) {
   if (ZYAN_FAILED(status))
     throw std::runtime_error(std::format("{}({}): assertion failed with status {:#x}", location.file_name(), location.line(), status));
-  return true;
+  return ZYAN_SUCCESS(status);
 }
 }  // namespace detail
 
@@ -138,10 +138,13 @@ template <typename T>
 concept DecoderCallback = std::invocable<T, Instruction &> && std::convertible_to<std::invoke_result_t<T, Instruction &>, DecoderStatus>;
 
 struct Decoder : ZydisDecoder {
-  Decoder() { detail::assert_status(ZydisDecoderInit(this, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64)); }
+  Decoder()
+      : ZydisDecoder_() {
+    detail::assert_status(ZydisDecoderInit(this, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64));
+  }
 
-  ZyanStatus ZydisDecoderDecodeFull(ZydisDecoder const *decoder, void const *buffer, ZyanUSize length, ZydisDecodedInstruction *instruction,
-                                    ZydisDecodedOperand *operands) {
+  static ZyanStatus ZydisDecoderDecodeFull(ZydisDecoder const *decoder, void const *buffer, ZyanUSize length,
+                                           ZydisDecodedInstruction *instruction, ZydisDecodedOperand *operands) {
     if (!decoder || !instruction || !operands) {
       return ZYAN_STATUS_INVALID_ARGUMENT;
     }
@@ -180,7 +183,8 @@ struct Decoder : ZydisDecoder {
 };
 
 struct Formatter : ZydisFormatter {
-  Formatter() noexcept {
+  Formatter() noexcept
+      : ZydisFormatter_() {
     detail::assert_status(ZydisFormatterInit(this, ZYDIS_FORMATTER_STYLE_INTEL));
     detail::assert_status(ZydisFormatterSetProperty(this, ZYDIS_FORMATTER_PROP_IMM_SIGNEDNESS, ZYDIS_SIGNEDNESS_AUTO));
   }
@@ -202,11 +206,11 @@ struct Formatter : ZydisFormatter {
 };
 
 struct desktop_manager_proto {
-  void *unknown0[3];
-  uint8_t unknown1[2];
-  bool rounded_shadow_enabled;
+  [[maybe_unused]] void *unknown0[3];
+  [[maybe_unused]] uint8_t unknown1[2];
+  [[maybe_unused]] bool rounded_shadow_enabled;
   bool enable_sharp_corners;
-  bool enable_rounded_corners;
+  [[maybe_unused]] bool enable_rounded_corners;
 };
 
 static_assert(offsetof(desktop_manager_proto, enable_rounded_corners) == 0x1C, "alignment issues (wrong arch)");
