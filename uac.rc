@@ -1,0 +1,8 @@
+#include <winuser.h>
+
+#define ID_MANIFEST 1
+#ifndef RT_MANIFEST
+#define RT_MANIFEST MAKEINTRESOURCE(24)
+#endif
+
+ID_MANIFEST RT_MANIFEST "uac.manifest"

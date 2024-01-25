@@ -83,6 +83,9 @@ option(ZYDIS_BUILD_EXAMPLES "" OFF)
 add_subdirectory("deps/zydis")
 
 aux_source_directory(./ SOURCE_FILES)
+list(APPEND SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/uac.rc)
+message("SOURCE_FILES: ${SOURCE_FILES}")
+
 add_executable(${TARGET_NAME} ${SOURCE_FILES})
 target_link_libraries(${TARGET_NAME} PRIVATE "Zydis")
 #target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -91,13 +94,13 @@ target_link_libraries(${TARGET_NAME} PRIVATE "Zydis")
 #target_link_libraries(${TARGET_NAME} PRIVATE -stdlib=libc++ -static-libgcc -static-libstdc++)
 target_link_libraries(${TARGET_NAME} PRIVATE -static)
 
-add_custom_command(
-	TARGET ${TARGET_NAME} POST_BUILD
-	COMMAND
-	"C:\\Program Files (x86)\\Windows Kits\\10\\bin\\x64\\mt.exe"
-	-manifest ${CMAKE_CURRENT_SOURCE_DIR}/uac.manifest
-	-outputresource:win11-toggle-rounded-corners.exe\;\#1
-	VERBATIM)
+# add_custom_command(
+# 	TARGET ${TARGET_NAME} POST_BUILD
+# 	COMMAND
+# 	"C:\\Program Files (x86)\\Windows Kits\\10\\bin\\x64\\mt.exe"
+# 	-manifest ${CMAKE_CURRENT_SOURCE_DIR}/uac.manifest
+# 	-outputresource:win11-toggle-rounded-corners.exe\;\#1
+# 	VERBATIM)
 
 # target_link_options(${TARGET_NAME} PRIVATE
 # 	"LINKER:/MANIFEST:EMBED"
