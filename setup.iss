@@ -7,7 +7,7 @@
 #define MyAppURL "https://github.com/sfc9982/win11-toggle-rounded-corners"
 
 [Setup]
-AppId={{5B8824C9-B4BE-4B1C-AA9F-BA8362C44B96}
+AppId={{F26B8DCE-5C19-4A98-A136-E343BF325C85}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
