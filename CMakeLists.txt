@@ -84,7 +84,7 @@ add_subdirectory("deps/zydis")
 
 aux_source_directory(./ SOURCE_FILES)
 list(APPEND SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/uac.rc)
-message("SOURCE_FILES: ${SOURCE_FILES}")
+#message("SOURCE_FILES: ${SOURCE_FILES}")
 
 add_executable(${TARGET_NAME} ${SOURCE_FILES})
 target_link_libraries(${TARGET_NAME} PRIVATE "Zydis")
@@ -93,6 +93,13 @@ target_link_libraries(${TARGET_NAME} PRIVATE "Zydis")
 #set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++ -static")
 #target_link_libraries(${TARGET_NAME} PRIVATE -stdlib=libc++ -static-libgcc -static-libstdc++)
 target_link_libraries(${TARGET_NAME} PRIVATE -static)
+
+set_target_properties(${TARGET_NAME} PROPERTIES
+#	WIN32_EXECUTABLE NO
+#	LINK_FLAGS "-Wl,--subsystem,windows"
+	LINK_FLAGS "-Xlinker --subsystem -Xlinker windows"
+#	LINK_FLAGS "/MANIFESTUAC:level=requireAdministrator"
+)
 
 # add_custom_command(
 # 	TARGET ${TARGET_NAME} POST_BUILD
