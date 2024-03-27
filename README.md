@@ -16,5 +16,5 @@ Compiled pass on MinGW Clang/GCC and Visual Studio MSVC 2019/2022.
 
 ### TO-DO
 
-- [ ] Deamon process
+- [ ] Deamon process (avoid restart of dwm.exe)
 - [ ] Address mem-leak
