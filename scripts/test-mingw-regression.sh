@@ -144,14 +144,37 @@ export WINEDEBUG=-all
 set +e
 wine_help="$(wine "${installed_exe}" --help 2>&1)"
 help_exit=$?
+wine_disable="$(wine "${installed_exe}" --disable 2>&1)"
+disable_exit=$?
 set -e
-if echo "${wine_help}" | grep -q 'Win11 Toggle Rounded Corners v1.3' \
-  && echo "${wine_help}" | grep -q 'Failed to find dwm process' \
-  && [[ "${help_exit}" -eq 1 ]]; then
-  ok "Wine --help prints the banner and the expected DWM-missing exit"
+if echo "${wine_help}" | grep -q 'Win11 Toggle Rounded Corners v1.4' \
+  && echo "${wine_help}" | grep -q -- '--daemon' \
+  && [[ "${help_exit}" -eq 0 ]]; then
+  ok "Wine --help prints v1.4 banner with --daemon and exits 0"
 else
   echo "${wine_help}" >&2
   die "Wine --help smoke failed (exit ${help_exit})"
+fi
+if echo "${wine_disable}" | grep -q 'Failed to find dwm process' \
+  && [[ "${disable_exit}" -eq 1 ]]; then
+  ok "Wine --disable exits 1 with the expected DWM-missing message"
+else
+  echo "${wine_disable}" >&2
+  die "Wine --disable smoke failed (exit ${disable_exit})"
+fi
+
+echo "== 5) CMAKE_INSTALL_PREFIX respects -D =="
+prefix_probe="${root}/output/mingw-prefix-probe"
+rm -rf "${build_dir}" "${prefix_probe}"
+cmake -S "${root}" -B "${build_dir}" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE="${root}/cmake/mingw-w64-x86_64.cmake" \
+  -DCMAKE_INSTALL_PREFIX="${prefix_probe}"
+cached_prefix="$(awk -F= '/^CMAKE_INSTALL_PREFIX:PATH=/{print $2; exit}' "${build_dir}/CMakeCache.txt")"
+if [[ "${cached_prefix}" == "${prefix_probe}" ]]; then
+  ok "CMAKE_INSTALL_PREFIX from -D is preserved in the cache"
+else
+  die "expected CMAKE_INSTALL_PREFIX=${prefix_probe}, got '${cached_prefix}'"
 fi
 
 echo
