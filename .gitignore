@@ -4,6 +4,7 @@
 settings.lua
 .idea
 cmake-build*
+output/
 
 *.swp
 *.ninja

@@ -9,6 +9,7 @@
 #include <iostream>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -44,14 +45,16 @@ template <std::size_t N>
 struct ProgramOptions {
   explicit ProgramOptions(auto &&...opts)
       : argc{0},
-        argv{const_cast<decltype(argv)>(CommandLineToArgvW(GetCommandLineW(), &argc))},
-        command{argv[0]},
+        argv{CommandLineToArgvW(GetCommandLineW(), &argc)},
+        command{argv && argc > 0 ? argv[0] : L""},
         program_name{command.substr(std::size(command) - std::ranges::distance(command | std::views::reverse |
                                                                                std::views::take_while([](auto const c) constexpr noexcept {
                                                                                  return c != L'/' && c != L'\\';
                                                                                })))},
         options{std::array{oberrich::detail::help_option, std::forward<decltype(opts)>(opts)...}} {
     using namespace std::string_view_literals;
+
+    if (!argv) throw std::runtime_error("Failed to parse command line.");
 
     constexpr auto trim_and_wrap = [](std::wstring_view str) constexpr noexcept {
       constexpr auto is_dash = [](auto const c) constexpr noexcept { return c == L'-'; };
@@ -65,7 +68,7 @@ struct ProgramOptions {
     }
 
     constexpr std::wstring_view program_name_friendly{L"Win11 Toggle Rounded Corners"sv};
-    constexpr std::wstring_view version{L"v1.3"sv};
+    constexpr std::wstring_view version{L"v1.4"sv};
     constexpr std::wstring_view license{L"MIT License"};
     constexpr std::wstring_view copyright_year{L"2024"sv};
     constexpr std::wstring_view author{L"oberrich, sfc9982"sv};
@@ -73,6 +76,13 @@ struct ProgramOptions {
     std::wcout << std::format(L"{} {}\nCopyright (C) {} {}, {}\n\n"sv, program_name_friendly, version, copyright_year, author, license);
 
     if (std::as_const(*this)[L"help"sv].value) print_help();
+  }
+
+  ProgramOptions(ProgramOptions const &) = delete;
+  ProgramOptions &operator=(ProgramOptions const &) = delete;
+
+  ~ProgramOptions() {
+    if (argv) LocalFree(argv);
   }
 
   template <typename ValT>
@@ -94,10 +104,51 @@ struct ProgramOptions {
   }
 
   int argc{};
-  wchar_t const **argv{};
+  LPWSTR *argv{};
   std::wstring_view command;
   std::wstring_view program_name;
   std::array<Option, N> options;
+};
+
+struct HandleGuard {
+  HANDLE handle{nullptr};
+
+  HandleGuard() = default;
+  explicit HandleGuard(HANDLE value) noexcept : handle{value} {}
+  HandleGuard(HandleGuard const &) = delete;
+  HandleGuard &operator=(HandleGuard const &) = delete;
+  HandleGuard(HandleGuard &&other) noexcept : handle{std::exchange(other.handle, nullptr)} {}
+  HandleGuard &operator=(HandleGuard &&other) noexcept {
+    if (this != &other) {
+      reset();
+      handle = std::exchange(other.handle, nullptr);
+    }
+    return *this;
+  }
+  ~HandleGuard() { reset(); }
+
+  void reset(HANDLE value = nullptr) noexcept {
+    if (handle && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    handle = value;
+  }
+
+  [[nodiscard]] HANDLE get() const noexcept { return handle; }
+  explicit operator bool() const noexcept { return handle && handle != INVALID_HANDLE_VALUE; }
+};
+
+struct ModuleGuard {
+  HMODULE module{nullptr};
+
+  ModuleGuard() = default;
+  explicit ModuleGuard(HMODULE value) noexcept : module{value} {}
+  ModuleGuard(ModuleGuard const &) = delete;
+  ModuleGuard &operator=(ModuleGuard const &) = delete;
+  ~ModuleGuard() {
+    if (module) FreeLibrary(module);
+  }
+
+  [[nodiscard]] HMODULE get() const noexcept { return module; }
+  explicit operator bool() const noexcept { return module != nullptr; }
 };
 
 template <typename... Options>
@@ -216,10 +267,10 @@ struct desktop_manager_proto {
 static_assert(offsetof(desktop_manager_proto, enable_rounded_corners) == 0x1C, "alignment issues (wrong arch)");
 
 std::optional<std::ptrdiff_t> locate_udwm_desktop_manager() {
-  auto const udwm_dll = LoadLibraryExA("udwm.dll", nullptr, DONT_RESOLVE_DLL_REFERENCES);
+  ModuleGuard udwm_dll{LoadLibraryExA("udwm.dll", nullptr, DONT_RESOLVE_DLL_REFERENCES)};
   if (!udwm_dll) return {};
 
-  auto const dwm_client_startup = reinterpret_cast<uint64_t>(GetProcAddress(udwm_dll, MAKEINTRESOURCE(101)));
+  auto const dwm_client_startup = reinterpret_cast<uint64_t>(GetProcAddress(udwm_dll.get(), MAKEINTRESOURCE(101)));
   if (!dwm_client_startup) return {};
 
   struct DynamicData {
@@ -251,7 +302,7 @@ std::optional<std::ptrdiff_t> locate_udwm_desktop_manager() {
 
   if (!dyn_data.instance || !dyn_data.found_create) return {};
 
-  return static_cast<std::ptrdiff_t>(dyn_data.instance - reinterpret_cast<ZyanU64>(udwm_dll));
+  return static_cast<std::ptrdiff_t>(dyn_data.instance - reinterpret_cast<ZyanU64>(udwm_dll.get()));
 }
 
 IMAGE_NT_HEADERS64 *image_nt_headers(void *base) {
@@ -316,41 +367,31 @@ bool enable_privilege(LPCTSTR name) noexcept {
   return true;
 }
 
-int main() try {
+DWORD find_dwm_pid(std::chrono::milliseconds timeout) {
+  using namespace std::chrono_literals;
+  using clock = std::chrono::steady_clock;
+
+  DWORD dwm_pid{};
+  for (auto first_attempt_at = clock::now(); clock::now() - first_attempt_at < timeout; std::this_thread::sleep_for(250ms)) {
+    if (auto const dwm_hwnd = FindWindowA("Dwm", nullptr); dwm_hwnd && GetWindowThreadProcessId(dwm_hwnd, &dwm_pid)) return dwm_pid;
+  }
+  return 0;
+}
+
+// Returns whether rounded corners ended up disabled, and a live handle to dwm.exe.
+std::pair<bool, HandleGuard> apply_rounded_corners(bool should_disable, bool should_override_toggle, bool no_patching) {
   using namespace std::string_view_literals;
   using namespace std::chrono_literals;
 
-  using clock = std::chrono::steady_clock;
-
-  ProgramOptions const options{Option{L"no-patching"sv,
-                                      L"Force DWM to use WARP adapter instead of patching .rdata section. This is used as a "
-                                      "fallback method by default in case the .rdata method fails."sv},
-                               Option{L"verbose"sv, L"Enables verbose output."sv},
-                               Option{L"disable"sv, L"Always disables rounded corners. Has precedence over --enable."sv},
-                               Option{L"enable"sv, L"Always enables rounded corners."sv}};
-
-  set_verbose(options[L"verbose"sv].value);
-
-  auto should_disable = options[L"disable"sv].value;
-  auto const should_override_toggle = should_disable || options[L"enable"sv].value;
-
-  if (!enable_privilege(SE_DEBUG_NAME))
-    throw std::runtime_error(std::format("Failed to enable '{}', make sure you are running as admin.", SE_DEBUG_NAME));
-
-  DWORD dwm_pid{};
-
-  for (auto first_attempt_at = clock::now(); clock::now() - first_attempt_at < 5s; std::this_thread::sleep_for(250ms)) {
-    if (auto const dwm_hwnd = FindWindowA("Dwm", nullptr); dwm_hwnd && GetWindowThreadProcessId(dwm_hwnd, &dwm_pid)) break;
-  }
-
+  auto const dwm_pid = find_dwm_pid(5s);
   if (!dwm_pid) throw std::runtime_error("Failed to find dwm process.\n");
 
   verbose(std::format("Found dwm.exe process, pid: {}.\n", dwm_pid));
 
-  auto const dwm_process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwm_pid);
+  HandleGuard dwm_process{OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwm_pid)};
   if (!dwm_process) throw std::runtime_error(std::format("Failed to open dwm.exe process, status: {:#x}!", GetLastError()));
 
-  verbose(std::format("Opened process handle {:#x} to dwm.exe.\n", reinterpret_cast<uint64_t>(dwm_process)));
+  verbose(std::format("Opened process handle {:#x} to dwm.exe.\n", reinterpret_cast<uint64_t>(dwm_process.get())));
 
   auto const dwm_base = find_module_base(dwm_pid, std::string_view{"udwm.dll"});
   if (!dwm_base) throw std::runtime_error("Failed to find udwm.dll module inside dwm.exe process!");
@@ -359,7 +400,7 @@ int main() try {
 
   constexpr std::array boolean_values{"enabled"sv, "disabled"sv};
 
-  if (options[L"no-patching"sv].value) {
+  if (no_patching) {
     // non-patching method: forces DWM to use WARP adapter
     auto const desktop_manager_rva = locate_udwm_desktop_manager();
     if (!desktop_manager_rva) throw std::runtime_error("Failed to locate g_pdmInstance RVA inside udwm.dll.");
@@ -369,7 +410,7 @@ int main() try {
     auto desktop_manager_ptr = reinterpret_cast<void const *>(dwm_base.value() + desktop_manager_rva.value());
     uint64_t desktop_manager_inst{};
     SIZE_T out_size{};
-    if (!ReadProcessMemory(dwm_process, desktop_manager_ptr, &desktop_manager_inst, sizeof(void *), &out_size) || !desktop_manager_inst)
+    if (!ReadProcessMemory(dwm_process.get(), desktop_manager_ptr, &desktop_manager_inst, sizeof(void *), &out_size) || !desktop_manager_inst)
       throw std::runtime_error(std::format("Failed to read value of g_pdmInstance from dwm.exe , status: {:#x}.\n", GetLastError()));
 
     auto desktop_manager = reinterpret_cast<desktop_manager_proto *>(desktop_manager_inst);
@@ -377,7 +418,7 @@ int main() try {
 
     if (!should_override_toggle) {
       out_size = {};
-      if (!ReadProcessMemory(dwm_process, &desktop_manager->enable_sharp_corners, &should_disable, 1, &out_size) || out_size != 1)
+      if (!ReadProcessMemory(dwm_process.get(), &desktop_manager->enable_sharp_corners, &should_disable, 1, &out_size) || out_size != 1)
         throw std::runtime_error(std::format("Failed to read 'enable_sharp_corners' from dwm.exe, status: {:#x}.\n", GetLastError()));
 
       verbose(std::format("Rounded corners were '{}', they are now being {}...\n", boolean_values[should_disable],
@@ -388,24 +429,25 @@ int main() try {
     }
 
     out_size = {};
-    if (!WriteProcessMemory(dwm_process, &desktop_manager->enable_sharp_corners, &should_disable, 1, &out_size) || out_size != 1)
+    if (!WriteProcessMemory(dwm_process.get(), &desktop_manager->enable_sharp_corners, &should_disable, 1, &out_size) || out_size != 1)
       throw std::runtime_error(std::format("Failed to write 'enable_sharp_corners' to dwm.exe, status: {:#x}.\n", GetLastError()));
   } else {
     // .rdata method: writes to floats related to rounding
-    auto udwm_dll = LoadLibraryExA("udwm.dll", nullptr, DONT_RESOLVE_DLL_REFERENCES);
+    ModuleGuard udwm_dll{LoadLibraryExA("udwm.dll", nullptr, DONT_RESOLVE_DLL_REFERENCES)};
+    if (!udwm_dll) throw std::runtime_error(std::format("Failed to map udwm.dll locally, status: {:#x}.\n", GetLastError()));
 
-    for (auto [original, ptr] : get_section<float>(udwm_dll, ".rdata") | std::views::filter([](auto const &flt) {
+    for (auto [original, ptr] : get_section<float>(udwm_dll.get(), ".rdata") | std::views::filter([](auto const &flt) {
                                   return flt == 4.f || flt == 8.f;
-                                }) | std::views::transform([=](float &flt) {
-                                  auto rva = reinterpret_cast<uint8_t *>(&flt) - reinterpret_cast<uint8_t *>(udwm_dll);
-                                  auto rebased = reinterpret_cast<float *>(dwm_base.value() + rva);
+                                }) | std::views::transform([udwm = udwm_dll.get(), base = dwm_base.value()](float &flt) {
+                                  auto rva = reinterpret_cast<uint8_t *>(&flt) - reinterpret_cast<uint8_t *>(udwm);
+                                  auto rebased = reinterpret_cast<float *>(base + rva);
                                   return std::make_tuple(flt, rebased);
                                 })) {
       constexpr auto kNearZeroRadius = 0.001f;
       float value{};
       SIZE_T out_size{};
 
-      if (!ReadProcessMemory(dwm_process, ptr, &value, sizeof(float), &out_size) || out_size != sizeof(float))
+      if (!ReadProcessMemory(dwm_process.get(), ptr, &value, sizeof(float), &out_size) || out_size != sizeof(float))
         throw std::runtime_error(std::format("Failed to read rounding float from dwm.exe, status: {:#x}.\n", GetLastError()));
 
       auto const is_disabled = value == kNearZeroRadius;
@@ -415,24 +457,68 @@ int main() try {
       verbose(std::format("Writing {} to border radius {:#x}\n", new_border_radius, reinterpret_cast<ZyanU64>(ptr)));
 
       DWORD old_protect{};
-      if (!VirtualProtectEx(dwm_process, ptr, sizeof(float), PAGE_READWRITE, &old_protect))
+      if (!VirtualProtectEx(dwm_process.get(), ptr, sizeof(float), PAGE_READWRITE, &old_protect))
         throw std::runtime_error(std::format("Failed to unprotect memory, last error: {}.\n", GetLastError()));
 
       out_size = {};
-      if (!WriteProcessMemory(dwm_process, ptr, &new_border_radius, sizeof(float), &out_size) || out_size != sizeof(float))
+      if (!WriteProcessMemory(dwm_process.get(), ptr, &new_border_radius, sizeof(float), &out_size) || out_size != sizeof(float))
         throw std::runtime_error(std::format("Failed to write new border radius to dwm.exe, last error: {}.\n", GetLastError()));
 
-      if (!VirtualProtectEx(dwm_process, ptr, sizeof(float), old_protect, &old_protect))
+      if (!VirtualProtectEx(dwm_process.get(), ptr, sizeof(float), old_protect, &old_protect))
         throw std::runtime_error(std::format("Failed to protect memory, last error: {}.\n", GetLastError()));
     }
   }
 
-  if (should_disable)
-    std::cout << "Your Windows 11 experience is now enhanced!\n";
-  else
-    std::cout << "Your Windows 11 experience is now dehanced!\n";
+  return {should_disable, std::move(dwm_process)};
+}
 
-  return 0;
+int main() try {
+  using namespace std::string_view_literals;
+  using namespace std::chrono_literals;
+
+  ProgramOptions const options{Option{L"no-patching"sv,
+                                      L"Force DWM to use WARP adapter instead of patching .rdata section. This is used as a "
+                                      "fallback method by default in case the .rdata method fails."sv},
+                               Option{L"verbose"sv, L"Enables verbose output."sv},
+                               Option{L"disable"sv, L"Always disables rounded corners. Has precedence over --enable."sv},
+                               Option{L"enable"sv, L"Always enables rounded corners."sv},
+                               Option{L"daemon"sv,
+                                      L"Stay running and re-apply after dwm.exe restarts. Defaults to --disable when neither "
+                                      L"--enable nor --disable is set."sv}};
+
+  if (options[L"help"sv].value) return 0;
+
+  set_verbose(options[L"verbose"sv].value);
+
+  auto should_disable = options[L"disable"sv].value;
+  auto should_override_toggle = should_disable || options[L"enable"sv].value;
+  auto const daemon = options[L"daemon"sv].value;
+  auto const no_patching = options[L"no-patching"sv].value;
+
+  // Daemon mode must persist a concrete preference across DWM restarts.
+  if (daemon && !should_override_toggle) {
+    should_disable = true;
+    should_override_toggle = true;
+  }
+
+  if (!enable_privilege(SE_DEBUG_NAME))
+    throw std::runtime_error(std::format("Failed to enable '{}', make sure you are running as admin.", SE_DEBUG_NAME));
+
+  for (;;) {
+    auto [disabled, dwm_process] = apply_rounded_corners(should_disable, should_override_toggle, no_patching);
+
+    if (disabled)
+      std::cout << "Your Windows 11 experience is now enhanced!\n";
+    else
+      std::cout << "Your Windows 11 experience is now dehanced!\n";
+
+    if (!daemon) return 0;
+
+    std::cout << "Daemon mode: waiting for dwm.exe to restart...\n";
+    WaitForSingleObject(dwm_process.get(), INFINITE);
+    dwm_process.reset();
+    verbose("dwm.exe exited; looking for a replacement process...\n");
+  }
 } catch (std::exception const &e) {
   std::cerr << e.what() << '\n';
   return 1;

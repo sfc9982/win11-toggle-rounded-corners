@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Win11 Toggle Rounded Corners"
-#define MyAppVersion "1.3"
+#define MyAppVersion "1.4"
 #define MyAppPublisher "oberrich, sfc9982"
 #define MyAppURL "https://github.com/sfc9982/win11-toggle-rounded-corners"
 
@@ -40,8 +40,8 @@ Source: "build\win11-toggle-rounded-corners.exe"; DestDir: "{app}"
 
 [Run]
 Filename: "schtasks"; \
-  Parameters: "/Create /F /RL highest /SC onlogon /TN ""Run win11-toggle-rounded-corners as admin on logon"" /TR ""'{app}\win11-toggle-rounded-corners.exe' --disable"""; \
-  Description: "Automatically run on logon"; \
+  Parameters: "/Create /F /RL highest /SC onlogon /TN ""Run win11-toggle-rounded-corners as admin on logon"" /TR ""'{app}\win11-toggle-rounded-corners.exe' --disable --daemon"""; \
+  Description: "Automatically run on logon (daemon re-applies after DWM restarts)"; \
   Flags: runhidden runascurrentuser postinstall
 Filename: "{app}\win11-toggle-rounded-corners.exe"; \
   Description: "Run now"; \

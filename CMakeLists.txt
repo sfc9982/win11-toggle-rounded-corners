@@ -120,7 +120,12 @@ set_target_properties(${TARGET_NAME} PROPERTIES
 #    <LIB_NAME>
 # )
 
-set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/output/${CMAKE_C_COMPILER_ID}-${CMAKE_C_COMPILER_ARCHITECTURE_ID}-${CMAKE_BUILD_TYPE})
+# Only set a default when the caller did not pass -DCMAKE_INSTALL_PREFIX.
+if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+	set(CMAKE_INSTALL_PREFIX
+		${CMAKE_CURRENT_SOURCE_DIR}/output/${CMAKE_C_COMPILER_ID}-${CMAKE_C_COMPILER_ARCHITECTURE_ID}-${CMAKE_BUILD_TYPE}
+		CACHE PATH "Install path prefix" FORCE)
+endif()
 
 # RUNTIME_DEPENDENCIES walks PE imports with the host resolver. That fails for
 # a MinGW cross build on Linux, and CMake also rejects the keyword while
