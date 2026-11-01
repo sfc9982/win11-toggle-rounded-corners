@@ -7,6 +7,10 @@
 #
 # The POSIX thread model is required for std::thread. The unsuffixed
 # x86_64-w64-mingw32-g++ alternative on Ubuntu defaults to the win32 model.
+#
+# CMAKE_CROSSCOMPILING stays enabled. The project install() rule skips
+# RUNTIME_DEPENDENCIES when cross-compiling so cmake --install does not ask
+# the Linux host resolver to scan a Windows PE.
 
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
@@ -14,9 +18,3 @@ set(CMAKE_SYSTEM_PROCESSOR x86_64)
 set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc-posix)
 set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++-posix)
 set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
-
-# CMake rejects install(TARGETS ... RUNTIME_DEPENDENCIES) when it considers
-# the build a cross compile. These compilers still target Windows; clearing
-# the flag lets the existing install() rule configure.
-set(CMAKE_CROSSCOMPILING OFF CACHE BOOL
-    "Allow install(RUNTIME_DEPENDENCIES) for this MinGW Windows build" FORCE)

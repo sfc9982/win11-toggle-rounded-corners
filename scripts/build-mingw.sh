@@ -5,7 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-git submodule update --init --recursive
+bash "${root}/scripts/lib/ensure-submodules.sh"
 
 cmake -S . -B cmake-build-mingw -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \

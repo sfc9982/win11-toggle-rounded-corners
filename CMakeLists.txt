@@ -122,13 +122,24 @@ set_target_properties(${TARGET_NAME} PROPERTIES
 
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/output/${CMAKE_C_COMPILER_ID}-${CMAKE_C_COMPILER_ARCHITECTURE_ID}-${CMAKE_BUILD_TYPE})
 
-install(TARGETS ${TARGET_NAME}
-	RUNTIME_DEPENDENCIES
-	PRE_EXCLUDE_REGEXES "system32/|((api-ms-).*\\.dll)|/usr/|/lib/|/lib64/"
-	POST_EXCLUDE_REGEXES "system32/|((api-ms-).*\\.dll)|/usr/|/lib/|/lib64/"
-	RUNTIME DESTINATION bin
-	LIBRARY DESTINATION lib
-	ARCHIVE DESTINATION lib)
+# RUNTIME_DEPENDENCIES walks PE imports with the host resolver. That fails for
+# a MinGW cross build on Linux, and CMake also rejects the keyword while
+# CMAKE_CROSSCOMPILING is true. Keep host installs unchanged; install only the
+# target artifacts when cross-compiling.
+if (CMAKE_CROSSCOMPILING)
+	install(TARGETS ${TARGET_NAME}
+		RUNTIME DESTINATION bin
+		LIBRARY DESTINATION lib
+		ARCHIVE DESTINATION lib)
+else()
+	install(TARGETS ${TARGET_NAME}
+		RUNTIME_DEPENDENCIES
+		PRE_EXCLUDE_REGEXES "system32/|((api-ms-).*\\.dll)|/usr/|/lib/|/lib64/"
+		POST_EXCLUDE_REGEXES "system32/|((api-ms-).*\\.dll)|/usr/|/lib/|/lib64/"
+		RUNTIME DESTINATION bin
+		LIBRARY DESTINATION lib
+		ARCHIVE DESTINATION lib)
+endif()
 
 # install(FILES ${SOURCE_FILES}
 #    DESTINATION src)
